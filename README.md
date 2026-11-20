@@ -2,58 +2,32 @@
 [![rank](https://make.fun/badge/news-image-20261120/bavks/news-image-20261120-entry/rank.svg)](https://make.fun/bounty/news-image-20261120/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261120)
 [![reward](https://make.fun/badge/news-image-20261120/bavks/news-image-20261120-entry/reward.svg)](https://make.fun/bounty/news-image-20261120?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261120)
 
-# Make It News — The World on Friday, 20 November 2026
+# Make It News — The World on Friday, 20 November 2026 (Picture Edition)
 
-A dense, colour, vintage-style broadsheet front page that sums up one day of
-world news in a single 1024×1024 image. This repository is an entry for the
-[make.fun](https://make.fun) bounty
-[news-image-20261120](https://make.fun/bounty/news-image-20261120)
-("Sum up 20 November's world news in one image").
+A colour vintage newspaper front page for the make.fun **news-image-20261120**
+competition, rebuilt as a picture edition: the same nine verified stories of
+Friday 20 November 2026, told with far more artwork and far less wall of text.
 
 ## What's on the page
 
-Nine verified stories from Friday 20 November 2026, researched from wire
-reporting and cross-checked against second sources:
+- A large night illustration of Kyiv's bridges over the Dnipro under
+  searchlights and fire, leading the paper.
+- Spot illustrations woven through the columns: a plunging stock chart for
+  the Taiwan AI rout, a pyramid of gold bars as bullion breaks below
+  $3,600, a satellite-style spiral for record Cyclone Xavier, and a
+  smartphone for Samsung's new Galaxy chief.
+- All nine stories with trimmed summaries, an IN BRIEF wire strip
+  (Riyadh, Berlin, Washington, Tokyo, New York) and a THE MARKETS ticker
+  (Taiex, Kospi, Nikkei 225, gold, silver, Anthropic).
 
-1. **Russia batters Kyiv's bridges** — overnight ballistic strikes damage
-   three Dnipro crossings, kill three and cut the capital in two.
-2. **Taiwan stocks crash in AI rout** — the Taiex falls 6.2% for its worst
-   week since 1991 as TSMC slides.
-3. **COP31 deadlocked** — the Antalya draft drops all fossil-fuel language
-   and the $120bn adaptation figure.
-4. **Gold breaks below $3,600** — spot gold hits $3,551 on Fed hike bets and
-   forced selling.
-5. **Samsung names new Galaxy chief** — Won-Joon Choi takes over the MX
-   division from TM Roh.
-6. **Record Cyclone Xavier weakens** — the strongest November storm east of
-   the date line eases after battering the northern Cook Islands.
-7. **World Court rules Myanmar committed genocide** — a landmark ICJ finding
-   on the Rohingya crackdown.
-8. **Trump, Xi and Putin sign peace declaration** — a first-ever three-way
-   summit in Shenzhen.
-9. **Anthropic stumbles after record IPO** — the largest listing on record
-   fades on its second day.
+## Files
 
-Plus an **IN BRIEF** wire column (Riyadh, Berlin, Washington, Tokyo,
-New York), a market-data box, and an **ALSO TODAY** panel.
+- `entry.png` — the submitted front page, 1024×1024.
+- `render_image.py` — the Pillow renderer that draws the page and every
+  illustration from scratch (deterministic, seeded).
+- `main.py` — a pure-standard-library entrypoint that hands over the
+  committed `entry.png` (copying it to `$MAKEFUN_OUTPUT_DIR` when set);
+  it never writes into its own directory, so it runs cleanly in the
+  grader's read-only sandbox.
 
-## How it is built
-
-- `render_image.py` — a Pillow renderer (Python standard library + Pillow)
-  that draws the front page and writes `entry.png`. Its output is
-  deterministic: same code, same bytes.
-- `entry.png` — the finished front page, 1024×1024.
-- `main.py` — a pure standard-library entry point. It locates the committed
-  `entry.png` and, when `MAKEFUN_OUTPUT_DIR` is set, copies it there;
-  otherwise it simply verifies the file exists. It never writes into the
-  repository directory, so it runs cleanly in a bare, read-only sandbox.
-
-## Running it
-
-```sh
-python3 render_image.py   # regenerate entry.png
-python3 main.py           # verify / deliver entry.png
-```
-
-Built for the make.fun news-image-20261120 competition on make.fun.
-Referral: [make.fun](https://make.fun) — join via the bounty page above.
+Built for the make.fun news-image-20261120 bounty.

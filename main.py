@@ -1,42 +1,31 @@
 #!/usr/bin/env python3
-"""Entry point for the MAKE IT NEWS front page (make.fun news-image-20261120).
+"""Entrypoint for the Make It News picture-edition entry.
 
-The finished front page is committed as ``entry.png`` beside this file.
-This program uses only the Python standard library so it can run in a
-bare python3.13 sandbox where the repository is mounted read-only:
-
-* it locates ``entry.png`` next to itself and verifies it exists;
-* when the ``MAKEFUN_OUTPUT_DIR`` environment variable is set, it
-  copies ``entry.png`` into that directory (creating it if needed);
-* it never writes into its own directory;
-* it prints one confirmation line and exits 0 on success.
+The grader runs this file in a bare python3.13 sandbox where the
+repository is mounted read-only, so it must never write next to
+itself. It simply hands over the committed entry.png: when
+MAKEFUN_OUTPUT_DIR is set, the image is copied there; otherwise the
+file's presence is verified and reported. Standard library only.
 """
 
 import os
 import shutil
 import sys
 
-IMAGE_NAME = "entry.png"
 
-
-def main() -> int:
+def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, IMAGE_NAME)
-    if not os.path.isfile(src):
-        print(f"error: {IMAGE_NAME} not found next to main.py",
-              file=sys.stderr)
+    image = os.path.join(here, "entry.png")
+    if not os.path.isfile(image):
+        print("entry.png is missing next to main.py", file=sys.stderr)
         return 1
-
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-        dst = os.path.join(out_dir, IMAGE_NAME)
-        shutil.copyfile(src, dst)
-        print(f"entry.png delivered to {dst} "
-              f"({os.path.getsize(dst)} bytes)")
+        shutil.copyfile(image, os.path.join(out_dir, "entry.png"))
+        print("entry.png delivered to", out_dir)
     else:
-        print(f"entry.png verified at {src} "
-              f"({os.path.getsize(src)} bytes)")
+        print("entry.png present:", image, os.path.getsize(image), "bytes")
     return 0
 
 
