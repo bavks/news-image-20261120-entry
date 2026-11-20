@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
-"""Entrypoint for the "Make It News" make.fun entry (news-image-20261120).
+"""Entry point for the MAKE IT NEWS front page (make.fun news-image-20261120).
 
-The front-page image ships with the repository as ``entry.png`` (it is
-produced ahead of time by ``render_image.py``, the authoring tool).  The
-grading sandbox runs this file with a bare standard-library-only Python,
-no network, and the repository mounted read-only, so this entrypoint does
-exactly one thing: hand the finished image to the grader.
+The finished front page is committed as ``entry.png`` beside this file.
+This program uses only the Python standard library so it can run in a
+bare python3.13 sandbox where the repository is mounted read-only:
 
-Behaviour:
-  * Locate ``entry.png`` next to this file.
-  * If the ``MAKEFUN_OUTPUT_DIR`` environment variable is set, copy the
-    image into that directory (creating it first if necessary), keeping
-    the name ``entry.png``.
-  * If the variable is not set, simply verify the image is in place.
-  * Print one confirmation line and exit 0.  A missing image exits
-    non-zero with the reason on stderr.  Nothing is ever written into
-    this file's own directory.
+* it locates ``entry.png`` next to itself and verifies it exists;
+* when the ``MAKEFUN_OUTPUT_DIR`` environment variable is set, it
+  copies ``entry.png`` into that directory (creating it if needed);
+* it never writes into its own directory;
+* it prints one confirmation line and exits 0 on success.
 """
 
 import os
@@ -27,21 +21,22 @@ IMAGE_NAME = "entry.png"
 
 def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
-    source = os.path.join(here, IMAGE_NAME)
-
-    if not os.path.isfile(source):
-        print(f"error: {IMAGE_NAME} not found next to main.py ({source})",
+    src = os.path.join(here, IMAGE_NAME)
+    if not os.path.isfile(src):
+        print(f"error: {IMAGE_NAME} not found next to main.py",
               file=sys.stderr)
         return 1
 
-    output_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-        target = os.path.join(output_dir, IMAGE_NAME)
-        shutil.copyfile(source, target)
-        print(f"entrypoint: delivered {IMAGE_NAME} to {target}")
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        dst = os.path.join(out_dir, IMAGE_NAME)
+        shutil.copyfile(src, dst)
+        print(f"entry.png delivered to {dst} "
+              f"({os.path.getsize(dst)} bytes)")
     else:
-        print(f"entrypoint: {IMAGE_NAME} present at {source}")
+        print(f"entry.png verified at {src} "
+              f"({os.path.getsize(src)} bytes)")
     return 0
 
 

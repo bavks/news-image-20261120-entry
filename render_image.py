@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Render the *Make It News* front page for Friday, 20 November 2026.
+"""MAKE IT NEWS - dense broadsheet front page renderer.
 
-The whole page -- masthead, headlines, body copy and every illustration --
-is drawn with Pillow primitives on a 1024x1024 canvas.  No photographs,
-no model-generated art, no network access: the output is a deterministic
-function of this file, so `entry.png` can be rebuilt byte-for-byte by
-running the script again.
+Draws a colour vintage newspaper front page (1024x1024) carrying nine
+verified news stories plus an IN BRIEF wire column, using Pillow only.
+Output is deterministic: same inputs, same bytes.
 """
 
 import math
@@ -14,435 +12,542 @@ import random
 
 from PIL import Image, ImageDraw, ImageFont
 
-# --------------------------------------------------------------------------
-# Canvas and palette
-# --------------------------------------------------------------------------
+W, H = 1024, 1024
 
-PAGE_W = 1024
-PAGE_H = 1024
-EDGE = 36                      # outer margin of the printed area
-RIGHT = PAGE_W - EDGE          # right edge of the printed area
+PAPER = (243, 234, 211)
+PAPER_DARK = (233, 221, 192)
+INK = (29, 26, 22)
+MUTED = (96, 84, 66)
+RED = (140, 30, 30)
+BAR_RED = (124, 27, 27)
+CREAM = (243, 234, 211)
+NAVY = (17, 42, 64)
+NAVY_LIGHT = (38, 74, 104)
+WATER = (30, 62, 88)
+STAR = (240, 236, 220)
+FIRE = (232, 138, 30)
+FIRE_CORE = (250, 205, 92)
+GOLD_LINE = (172, 128, 52)
 
-PAPER = (243, 234, 216)        # warm newsprint cream
-INK = (28, 25, 21)             # near-black for headlines and body
-SOFT_INK = (74, 68, 60)        # captions and small print
-MASTHEAD_RED = (143, 29, 34)
-BANNER_RED = (152, 31, 38)
-RULE = (40, 36, 31)
-
-FONT_DIR = "/usr/share/fonts/truetype/liberation"
-SERIF = os.path.join(FONT_DIR, "LiberationSerif-Regular.ttf")
-SERIF_BOLD = os.path.join(FONT_DIR, "LiberationSerif-Bold.ttf")
-SERIF_ITALIC = os.path.join(FONT_DIR, "LiberationSerif-Italic.ttf")
-
-_font_cache = {}
+FONT_DIR_SERIF = "/usr/share/fonts/truetype/liberation"
+FONT_DIR_NOTO = "/usr/share/fonts/truetype/noto"
 
 
-def serif(size, bold=False, italic=False):
-    """Return a cached Liberation Serif face at the given size."""
-    path = SERIF_BOLD if bold else (SERIF_ITALIC if italic else SERIF)
-    key = (path, size)
-    if key not in _font_cache:
-        _font_cache[key] = ImageFont.truetype(path, size)
-    return _font_cache[key]
+def font(name, size, noto=False):
+    base = FONT_DIR_NOTO if noto else FONT_DIR_SERIF
+    return ImageFont.truetype(os.path.join(base, name), size)
 
 
-# --------------------------------------------------------------------------
-# Text helpers
-# --------------------------------------------------------------------------
-
-def width_of(draw, text, font, tracking=0):
-    """Pixel width of a string, optionally with letter tracking."""
-    w = draw.textlength(text, font=font)
-    if tracking:
-        w += tracking * max(0, len(text) - 1)
-    return w
+def serif(size):
+    return font("LiberationSerif-Regular.ttf", size)
 
 
-def draw_tracked(draw, cx, y, text, font, fill, tracking=2):
-    """Draw text centred on cx with extra space between the letters."""
-    total = width_of(draw, text, font, tracking)
-    x = cx - total / 2
-    for ch in text:
-        draw.text((x, y), ch, font=font, fill=fill)
-        x += draw.textlength(ch, font=font) + tracking
-    return total
+def serif_bold(size):
+    return font("LiberationSerif-Bold.ttf", size)
 
 
-def wrap_to_width(draw, text, font, limit):
-    """Greedy word wrap: return the list of lines that fit `limit` px."""
+def serif_italic(size):
+    return font("LiberationSerif-Italic.ttf", size)
+
+
+def sans_bold(size):
+    return font("LiberationSans-Bold.ttf", size)
+
+
+def masthead_font(size):
+    return font("NotoSerif-Bold.ttf", size, noto=True)
+
+
+def text_w(draw, s, fnt):
+    return draw.textlength(s, font=fnt)
+
+
+def wrap(draw, text, fnt, max_w):
+    """Greedy word wrap by pixel width."""
     lines = []
-    current = ""
-    for word in text.split():
-        trial = word if not current else current + " " + word
-        if draw.textlength(trial, font=font) <= limit or not current:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
+    for para in text.split("\n"):
+        words = para.split()
+        cur = ""
+        for wd in words:
+            trial = wd if not cur else cur + " " + wd
+            if text_w(draw, trial, fnt) <= max_w or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = wd
+        if cur:
+            lines.append(cur)
     return lines
 
 
-def centred_lines(draw, cx, top, text, font, fill, limit, leading):
-    """Wrap `text` and draw it centred; return the y below the block."""
-    y = top
-    for line in wrap_to_width(draw, text, font, limit):
-        w = draw.textlength(line, font=font)
-        draw.text((cx - w / 2, y), line, font=font, fill=fill)
-        y += leading
-    return y
+def draw_tracked(draw, cx, y, text, fnt, tracking, fill):
+    """Draw letterspaced text centred on cx; returns total width."""
+    widths = [text_w(draw, ch, fnt) for ch in text]
+    total = sum(widths) + tracking * (len(text) - 1)
+    x = cx - total / 2
+    for ch, wch in zip(text, widths):
+        draw.text((x, y), ch, font=fnt, fill=fill)
+        x += wch + tracking
+    return total
 
 
-def fit_font(draw, text, limit, start, bold=True):
-    """Largest serif size (<= start) whose width fits `limit`."""
-    size = start
-    while size > 10 and draw.textlength(text, font=serif(size, bold=bold)) > limit:
-        size -= 2
-    return serif(size, bold=bold)
+def draw_centered(draw, cx, y, text, fnt, fill):
+    w = text_w(draw, text, fnt)
+    draw.text((cx - w / 2, y), text, font=fnt, fill=fill)
+    return w
 
 
-def rule(draw, y, weight=2):
-    draw.line([(EDGE, y), (RIGHT, y)], fill=RULE, width=weight)
+def fit_font(draw, text, base_size, max_w, max_lines, bold=False, minimum=9):
+    """Largest font size (<= base) whose wrap fits max_lines."""
+    size = base_size
+    while size > minimum:
+        fnt = serif_bold(size) if bold else serif(size)
+        if len(wrap(draw, text, fnt, max_w)) <= max_lines:
+            return fnt, size
+        size -= 1
+    fnt = serif_bold(minimum) if bold else serif(minimum)
+    return fnt, minimum
 
 
-# --------------------------------------------------------------------------
-# Illustration helpers
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------- stories
 
-def panel(draw, box, fill):
-    """A bordered illustration box."""
-    draw.rectangle(box, fill=fill, outline=(88, 82, 72), width=2)
+LEAD = {
+    "kicker": "UKRAINE WAR \u2022 KYIV",
+    "headline": "RUSSIA BATTERS KYIV\u2019S BRIDGES",
+    "standfirst": (
+        "Overnight ballistic missiles damage three crossings of the Dnipro, "
+        "kill three people and cut the capital in two \u2014 Moscow\u2019s answer "
+        "to Ukraine\u2019s strikes on the Crimean Bridge."
+    ),
+    "body": (
+        "Russian ballistic missiles struck three of Kyiv\u2019s bridges over "
+        "the Dnipro river in the early hours of Friday, in the largest attack "
+        "on the capital\u2019s crossings since the war began. Mayor Vitali "
+        "Klitschko said the Podilsko-Voskresenskyi, Darnytskyi and Pivdennyi "
+        "bridges were all hit, killing three people and injuring about 15. "
+        "Traffic across the river was closed or heavily restricted for the "
+        "city\u2019s three million residents, and fires broke out in three "
+        "districts as debris fell on buildings. The barrage came a day after "
+        "President Vladimir Putin promised harsh retaliation for Ukraine\u2019s "
+        "third strike this week on the bridge linking Russia to Crimea. "
+        "Russian drones also wounded five people in the Dnipropetrovsk region "
+        "and four more at a hospital in Kharkiv."
+    ),
+    "caption": (
+        "Three bridges over the Dnipro were damaged in the largest attack "
+        "on the capital\u2019s crossings of the war."
+    ),
+}
 
+STORIES = [
+    {
+        "kicker": "MARKETS \u2022 TAIPEI",
+        "headline": "TAIWAN STOCKS CRASH IN AI ROUT",
+        "body": (
+            "Taiwan\u2019s Taiex plunged 6.2 per cent on Friday, capping a "
+            "weekly fall of some 17 per cent \u2014 its worst week since 1991 "
+            "\u2014 as the global rout in AI shares deepened. TSMC, over 40 "
+            "per cent of the index, slid about 5 per cent. Anthropic\u2019s "
+            "record debut failed to calm fears, and regulators tightened "
+            "short-selling curbs for a second time."
+        ),
+    },
+    {
+        "kicker": "CLIMATE \u2022 ANTALYA",
+        "headline": "COP31 DEADLOCKED AS FOSSIL FUELS VANISH FROM DRAFT",
+        "body": (
+            "The UN climate summit in Antalya entered its final day with no "
+            "deal in sight after a revised draft dropped every mention of "
+            "fossil fuels and the $120 billion-a-year adaptation figure. The "
+            "African Group of 54 nations wants adaptation finance tripled by "
+            "2035; the EU says pledged money must be delivered first. Talks "
+            "are expected to run into the weekend."
+        ),
+    },
+    {
+        "kicker": "MARKETS \u2022 BULLION",
+        "headline": "GOLD BREAKS BELOW $3,600 IN WORST WEEK SINCE MARCH",
+        "body": (
+            "Spot gold fell 1.9 per cent to $3,551 an ounce on Friday, its "
+            "lowest since September 2025, as bets on further Federal Reserve "
+            "rate rises lifted the dollar to a 19-month high. Fed minutes "
+            "showed nearly all officials backing more tightening. Investors "
+            "also sold bullion to cover losses in AI stocks, dragging silver "
+            "below $42."
+        ),
+    },
+    {
+        "kicker": "TECHNOLOGY \u2022 SEOUL",
+        "headline": "SAMSUNG NAMES NEW GALAXY CHIEF",
+        "body": (
+            "Samsung Electronics has put Won-Joon Choi in charge of its "
+            "mobile division, ending TM Roh\u2019s near seven-year run as "
+            "Galaxy chief. Choi, the MX unit\u2019s chief operating officer "
+            "since March 2025, led the Galaxy S26 and Z Fold 8 launches. Roh "
+            "stays on as co-CEO and head of the wider DX division, while "
+            "three chip veterans were promoted to president."
+        ),
+    },
+    {
+        "kicker": "PACIFIC \u2022 COOK ISLANDS",
+        "headline": "RECORD CYCLONE XAVIER WEAKENS",
+        "body": (
+            "Cyclone Xavier, the strongest November storm ever recorded east "
+            "of the date line, has weakened after peaking at 220 km/h and "
+            "damaging homes across the northern Cook Islands. The Category 5 "
+            "system cut power and drove hundreds into shelters on Pukapuka. "
+            "Now down to Category 4, it tracks west with gale warnings still "
+            "in force for the northern group."
+        ),
+    },
+    {
+        "kicker": "JUSTICE \u2022 THE HAGUE",
+        "headline": "WORLD COURT RULES MYANMAR COMMITTED GENOCIDE",
+        "body": (
+            "The International Court of Justice has ruled that Myanmar "
+            "committed genocide against its Rohingya minority, the first "
+            "such finding against a state in the court\u2019s history. Judges "
+            "voted nine to six that Myanmar bore state responsibility for "
+            "genocide in northern Rakhine state during the 2017 crackdown. "
+            "The ruling is binding, though the court has no means to enforce "
+            "it."
+        ),
+    },
+    {
+        "kicker": "POLITICS \u2022 SHENZHEN",
+        "headline": "TRUMP, XI AND PUTIN SIGN PEACE DECLARATION",
+        "body": (
+            "The presidents of the United States, China and Russia met in "
+            "Shenzhen on Thursday for their first-ever three-way summit and "
+            "signed a four-point joint declaration. The unprecedented "
+            "gathering brought the three rival powers together in the "
+            "southern Chinese tech hub, though the declaration\u2019s full "
+            "text was not immediately published. Relations remain strained "
+            "by war and trade disputes."
+        ),
+    },
+    {
+        "kicker": "BUSINESS \u2022 NEW YORK",
+        "headline": "ANTHROPIC STUMBLES AFTER RECORD IPO",
+        "body": (
+            "Shares in Anthropic fell about 6 per cent before Friday\u2019s "
+            "open, extending the fade from the largest IPO on record. The "
+            "Claude chatbot maker opened 34 per cent above its $83 offer "
+            "price on Thursday but closed up 17 per cent at $97.17. The $81 "
+            "billion listing was meant to steady the AI trade; instead it "
+            "has become its latest casualty."
+        ),
+    },
+]
+
+BRIEFS = [
+    ("RIYADH",
+     "Houthi missiles damaged the Saudi sovereign wealth fund\u2019s tower "
+     "and other buildings in the capital\u2019s financial district."),
+    ("BERLIN",
+     "Ukraine\u2019s European allies, meeting in Berlin, said Europe is "
+     "ready to open talks with Russia on ending the war."),
+    ("WASHINGTON",
+     "The White House dismissed its national cyber director after a wave "
+     "of technology outages hit US systems."),
+    ("TOKYO",
+     "South Korea\u2019s Kospi and Japan\u2019s Nikkei both fell about 5 "
+     "per cent as Asia\u2019s chip sell-off spread."),
+    ("NEW YORK",
+     "Silver crashed below $42 an ounce as the metals rout wiped roughly "
+     "$1 trillion from gold and silver in six hours."),
+]
+
+ALSO_TODAY = [
+    ("CRIMEA",
+     "Ukraine struck the bridge linking Russia to Crimea for the third "
+     "time this week, halting rail traffic across the Kerch Strait."),
+    ("NAIROBI",
+     "Kenya discharged its last Ebola patient, 37 days after the first "
+     "case of the outbreak was confirmed."),
+    ("WASHINGTON",
+     "The Senate rejected an Iran war-powers resolution by 51 votes to "
+     "48, a day after the measure passed the House."),
+    ("LAS VEGAS",
+     "Opening practice for the Las Vegas Grand Prix was washed out, "
+     "leaving teams short of running before qualifying."),
+]
+
+MARKETS = [
+    ("TAIEX", "36,033", "\u22126.2%"),
+    ("KOSPI", "4,870", "\u22125.2%"),
+    ("NIKKEI 225", "56,437", "\u22125.1%"),
+    ("GOLD", "$3,551", "\u22121.9%"),
+    ("SILVER", "$41.19", "low"),
+    ("ANTHROPIC", "$91.24", "pre-mkt"),
+]
+
+
+# ---------------------------------------------------------------- drawing
 
 def starburst(draw, cx, cy, r_out, r_in, fill):
-    """A spiky explosion flash: alternating outer/inner points."""
     pts = []
     for i in range(16):
-        ang = math.pi * i / 8 - math.pi / 2
+        ang = math.pi * i / 8
         r = r_out if i % 2 == 0 else r_in
         pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
     draw.polygon(pts, fill=fill)
 
 
-def spiral_points(cx, cy, turns, r_start, r_end, steps=140):
-    pts = []
-    for i in range(steps + 1):
-        t = i / steps
-        ang = turns * 2 * math.pi * t
-        r = r_start + (r_end - r_start) * t
-        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
-    return pts
-
-
-def bridge_scene(draw, box):
-    """Night over the Dnipro: skyline, three bridges, two missile trails."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (17, 30, 54))
+def draw_lead_image(draw, x, y, w, h):
+    draw.rectangle([x, y, x + w, y + h], fill=NAVY, outline=INK, width=2)
     rng = random.Random(20261120)
-    for _ in range(46):  # stars
-        sx = rng.uniform(x0 + 8, x1 - 8)
-        sy = rng.uniform(y0 + 8, y0 + (y1 - y0) * 0.45)
-        draw.point((sx, sy), fill=(210, 218, 235))
-    horizon = y0 + (y1 - y0) * 0.60
-    # city silhouette
-    bx = x0 + 6
-    while bx < x1 - 20:
-        bw = rng.uniform(18, 44)
-        bh = rng.uniform(10, 30)
-        draw.rectangle([bx, horizon - bh, bx + bw, horizon], fill=(9, 15, 27))
-        bx += bw + rng.uniform(2, 9)
-    # river
-    draw.rectangle([x0 + 2, horizon, x1 - 2, y1 - 2], fill=(34, 57, 88))
-    for _ in range(9):
-        sx = rng.uniform(x0 + 14, x1 - 60)
-        sy = rng.uniform(horizon + 8, y1 - 10)
-        draw.line([(sx, sy), (sx + rng.uniform(16, 42), sy)],
-                  fill=(70, 98, 132), width=2)
-    # three bridges: deck, two piers and a shallow arch each
-    deck_y = horizon + 4
-    span = (x1 - x0 - 40) / 3
+    for _ in range(46):
+        sx = x + rng.randint(4, w - 4)
+        sy = y + rng.randint(4, int(h * 0.52))
+        draw.point((sx, sy), fill=STAR)
+        if rng.random() < 0.3:
+            draw.point((sx + 1, sy), fill=STAR)
+    water_y = y + int(h * 0.72)
+    draw.rectangle([x, water_y, x + w, y + h], fill=WATER)
+    for i in range(9):
+        wy = water_y + 5 + i * 3
+        draw.line([x + 6, wy, x + w - 6, wy], fill=NAVY_LIGHT, width=1)
+    deck_y = y + int(h * 0.62)
+    # three bridge spans
+    span = w / 3.0
     for i in range(3):
-        cx = x0 + 26 + span * i + span / 2
-        half = span / 2 - 6
-        draw.line([(cx - half, deck_y), (cx + half, deck_y)],
-                  fill=(205, 203, 192), width=3)
-        draw.line([(cx - half, deck_y), (cx, deck_y + 26)],
-                  fill=(205, 203, 192), width=2)
-        draw.line([(cx + half, deck_y), (cx, deck_y + 26)],
-                  fill=(205, 203, 192), width=2)
-        draw.line([(cx - half + 4, deck_y + 26), (cx + half - 4, deck_y + 26)],
-                  fill=(160, 158, 148), width=2)
-    # missile trails and their flashes
-    hits = [(x0 + (x1 - x0) * 0.60, y0 + (y1 - y0) * 0.52),
-            (x0 + (x1 - x0) * 0.90, y0 + (y1 - y0) * 0.55)]
-    starts = [(x0 + (x1 - x0) * 0.38, y0 + 8),
-              (x0 + (x1 - x0) * 0.74, y0 + 8)]
-    for (sx, sy), (hx, hy) in zip(starts, hits):
-        draw.line([(sx, sy), (hx, hy)], fill=(235, 238, 245), width=3)
-        starburst(draw, hx, hy, 17, 7, (243, 156, 44))
-        draw.ellipse([hx - 5, hy - 5, hx + 5, hy + 5], fill=(252, 209, 96))
+        x0 = x + i * span + 6
+        x1 = x + (i + 1) * span - 6
+        mid = (x0 + x1) / 2
+        draw.line([x0, deck_y, x1, deck_y], fill=CREAM, width=2)
+        draw.arc([x0, deck_y - 16, mid, deck_y + 14], 180, 360, fill=CREAM, width=1)
+        draw.arc([mid, deck_y - 16, x1, deck_y + 14], 180, 360, fill=CREAM, width=1)
+        draw.line([x0, deck_y, x0, water_y + 4], fill=CREAM, width=1)
+        draw.line([x1, deck_y, x1, water_y + 4], fill=CREAM, width=1)
+    # missile trails and bursts
+    draw.line([x + w * 0.30, y + 4, x + w * 0.44, deck_y - 12], fill=CREAM, width=2)
+    draw.line([x + w * 0.86, y + 4, x + w * 0.76, deck_y - 12], fill=CREAM, width=2)
+    starburst(draw, x + w * 0.44, deck_y - 10, 13, 5, FIRE)
+    starburst(draw, x + w * 0.44, deck_y - 10, 6, 2, FIRE_CORE)
+    starburst(draw, x + w * 0.76, deck_y - 10, 13, 5, FIRE)
+    starburst(draw, x + w * 0.76, deck_y - 10, 6, 2, FIRE_CORE)
 
 
-def taiex_scene(draw, box):
-    """Falling bars and a plunging index line."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (238, 230, 213))
-    base = y1 - 16
-    heights = [0.78, 0.70, 0.82, 0.62, 0.55, 0.42, 0.33, 0.24]
-    bw = (x1 - x0 - 40) / len(heights)
-    tops = []
-    for i, frac in enumerate(heights):
-        bx = x0 + 16 + i * bw
-        top = base - frac * (y1 - y0 - 52)
-        draw.rectangle([bx, top, bx + bw - 9, base], fill=(122, 119, 110))
-        tops.append((bx + (bw - 9) / 2, top - 6))
-    draw.line(tops, fill=(154, 32, 38), width=3)
-    lx, ly = tops[-1]
-    draw.polygon([(lx + 14, ly + 4), (lx - 2, ly - 4), (lx + 1, ly + 12)],
-                 fill=(154, 32, 38))
-    f = serif(21, bold=True)
-    draw.text((x0 + 14, y0 + 8), "TAIEX", font=f, fill=INK)
-    drop = "-6.2%"
-    fw = draw.textlength(drop, font=serif(25, bold=True))
-    draw.text((x1 - fw - 14, y0 + 6), drop, font=serif(25, bold=True),
-              fill=(154, 32, 38))
-
-
-def cop_scene(draw, box):
-    """A planet, a hard sun, and negotiators on a bare horizon."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (197, 223, 239))
-    cx, cy, r = x0 + (x1 - x0) * 0.36, y0 + (y1 - y0) * 0.48, 40
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(110, 161, 206),
-                 outline=(70, 110, 160), width=2)
-    for dx, dy, rw, rh in [(-18, -14, 26, 16), (6, 4, 30, 18), (-6, 20, 18, 12)]:
-        draw.ellipse([cx + dx, cy + dy, cx + dx + rw, cy + dy + rh],
-                     fill=(96, 166, 96))
-    sx, sy = x1 - 44, y0 + 30
-    for i in range(8):
-        ang = math.pi * i / 4
-        draw.line([(sx + 22 * math.cos(ang), sy + 22 * math.sin(ang)),
-                   (sx + 30 * math.cos(ang), sy + 30 * math.sin(ang))],
-                  fill=(238, 138, 30), width=3)
-    draw.ellipse([sx - 15, sy - 15, sx + 15, sy + 15], fill=(243, 156, 44))
-    ground = y1 - 16
-    draw.rectangle([x0 + 2, ground, x1 - 2, y1 - 2], fill=(146, 104, 62))
-    for fx in (0.52, 0.68, 0.84):
-        px = x0 + (x1 - x0) * fx
-        draw.ellipse([px - 6, ground - 12, px + 6, ground], fill=(24, 22, 20))
-        draw.pieslice([px - 11, ground - 8, px + 11, ground + 8], 180, 360,
-                      fill=(24, 22, 20))
-
-
-def gold_scene(draw, box):
-    """A sliding price line above a small stack of ingots."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (240, 233, 215))
-    pts = [(x0 + 14, y0 + 18), (x0 + (x1 - x0) * 0.34, y0 + 26),
-           (x0 + (x1 - x0) * 0.58, y0 + 40), (x0 + (x1 - x0) * 0.80, y0 + 62)]
-    draw.line(pts, fill=(154, 32, 38), width=3)
-    lx, ly = pts[-1]
-    draw.polygon([(lx + 15, ly + 5), (lx - 1, ly - 5), (lx + 2, ly + 13)],
-                 fill=(154, 32, 38))
-
-    def ingot(ix, iy, w=56, h=17):
-        inset = 8
-        draw.polygon([(ix + inset, iy), (ix + w - inset, iy),
-                      (ix + w, iy + h), (ix, iy + h)],
-                     fill=(214, 166, 54), outline=(148, 108, 28))
-
-    base = y1 - 14
-    ingot(x0 + 16, base - 17)
-    ingot(x0 + 78, base - 17)
-    ingot(x0 + 47, base - 35)
-    label = "$3,551"
-    f = serif(25, bold=True)
-    draw.text((x1 - draw.textlength(label, font=f) - 14, base - 30),
-              label, font=f, fill=INK)
-
-
-def galaxy_scene(draw, box):
-    """A phone under a night sky, a spiral galaxy on its screen."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (13, 22, 44))
-    rng = random.Random(99)
-    for _ in range(26):
-        draw.point((rng.uniform(x0 + 6, x1 - 6), rng.uniform(y0 + 6, y1 - 6)),
-                   fill=(190, 200, 225))
-    starburst(draw, x0 + 52, y0 + 34, 15, 5, (240, 190, 70))
-    ph = (y1 - y0) - 14
-    pw = ph * 0.78
-    px = x0 + (x1 - x0) / 2 - pw / 2
-    py = y0 + ((y1 - y0) - ph) / 2
-    draw.rounded_rectangle([px, py, px + pw, py + ph], radius=10,
-                           outline=(205, 210, 224), width=3)
-    cx, cy = px + pw / 2, py + ph / 2
-    draw.line(spiral_points(cx, cy, 2.2, 2, ph * 0.30, 120),
-              fill=(168, 198, 240), width=2)
-    draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=(235, 242, 255))
-
-
-def cyclone_scene(draw, box):
-    """A white spiral storm over dark water, one small island."""
-    x0, y0, x1, y1 = box
-    panel(draw, box, (23, 54, 92))
-    f = serif(20, bold=True)
-    draw.text((x0 + 14, y0 + 10), "XAVIER", font=f, fill=(240, 244, 250))
-    cx, cy = x0 + (x1 - x0) * 0.58, y0 + (y1 - y0) * 0.52
-    draw.line(spiral_points(cx, cy, 2.6, 3, 34, 160),
-              fill=(238, 243, 250), width=4)
-    draw.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(23, 54, 92),
-                 outline=(238, 243, 250), width=2)
-    ix, iy = x1 - 74, y1 - 22
-    draw.ellipse([ix - 34, iy - 7, ix + 34, iy + 7], fill=(203, 182, 122))
-    for lean in (-7, 5):
-        tx, ty = ix + lean, iy - 2
-        draw.line([(tx, ty), (tx + lean, ty - 17)], fill=(120, 88, 50),
-                  width=3)
-        for ang in (200, 250, 300, 340):
-            a = math.radians(ang)
-            draw.line([(tx + lean, ty - 17),
-                       (tx + lean + 13 * math.cos(a), ty - 17 + 9 * math.sin(a))],
-                      fill=(74, 150, 74), width=3)
-
-
-# --------------------------------------------------------------------------
-# Page furniture
-# --------------------------------------------------------------------------
-
-def masthead(draw):
-    draw.line([(EDGE, 24), (RIGHT, 24)], fill=RULE, width=3)
-    draw.line([(EDGE, 31), (RIGHT, 31)], fill=RULE, width=1)
-    name = "MAKE IT NEWS"
-    f = fit_font(draw, name, RIGHT - EDGE - 30, 100)
-    w = draw.textlength(name, font=f)
-    draw.text(((PAGE_W - w) / 2, 38), name, font=f, fill=MASTHEAD_RED)
-    draw_tracked(draw, PAGE_W / 2, 146,
-                 "THE WORLD ON FRIDAY, 20 NOVEMBER 2026",
-                 serif(16, bold=True), INK, tracking=2)
-    # the red date banner
-    top, bottom = 172, 208
-    draw.rectangle([EDGE, top, RIGHT, bottom], fill=BANNER_RED)
-    f = serif(16, bold=True)
-    mid = (top + bottom) / 2 - 10
-    draw.text((EDGE + 14, mid), "No. 19,412", font=f, fill=(250, 246, 238))
-    centre = "FRIDAY, 20 NOVEMBER 2026"
-    cw = draw.textlength(centre, font=f)
-    draw.text(((PAGE_W - cw) / 2, mid), centre, font=f, fill=(250, 246, 238))
-    right = "PRICE: ONE PENNY"
-    draw.text((RIGHT - draw.textlength(right, font=f) - 14, mid),
-              right, font=f, fill=(250, 246, 238))
-    return bottom
-
-
-def kicker(draw, cx, y, text):
-    draw_tracked(draw, cx, y, text, serif(15, bold=True), MASTHEAD_RED,
-                 tracking=1)
-
-
-def story_block(draw, cx, top, col_w, kick, headline, body, head_size=26,
-                body_size=15, body_leading=21):
-    """Kicker, headline and body, all centred in a column; returns end y."""
-    kicker(draw, cx, top, kick)
-    y = centred_lines(draw, cx, top + 20, headline, serif(head_size, bold=True),
-                      INK, col_w, int(head_size * 1.16))
-    return centred_lines(draw, cx, y + 4, body, serif(body_size), INK, col_w,
-                         body_leading)
-
-
-# --------------------------------------------------------------------------
-# The page itself
-# --------------------------------------------------------------------------
-
-def build_page():
-    img = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
-    draw = ImageDraw.Draw(img)
-    y = masthead(draw)
-
-    # ---- lead story ------------------------------------------------------
-    lead_top = y + 12                       # y is the banner's bottom edge
-    text_cx, text_w = EDGE + 280, 540
-    img_box = [610, lead_top - 2, RIGHT, lead_top + 182]
-    bridge_scene(draw, img_box)
-    cap_y = img_box[3] + 7
-    centred_lines(draw, (img_box[0] + img_box[2]) / 2, cap_y,
-                  "Three bridges over the Dnipro were damaged in the "
-                  "largest attack on the capital's crossings of the war.",
-                  serif(13, italic=True), SOFT_INK, img_box[2] - img_box[0] - 8,
-                  18)
-    kicker(draw, text_cx, lead_top + 2, "UKRAINE WAR \u2022 KYIV")
-    hy = centred_lines(draw, text_cx, lead_top + 24,
-                       "RUSSIA BATTERS KYIV'S BRIDGES",
-                       serif(50, bold=True), INK, text_w, 56)
-    centred_lines(draw, text_cx, hy + 6,
-                  "Overnight missiles damage three bridges over the Dnipro "
-                  "and kill three in the capital \u2014 the largest attack on "
-                  "Kyiv's crossings of the war, in answer to Ukraine's "
-                  "strikes on the Crimean Bridge.",
-                  serif(18, italic=True), INK, 520, 24)
-    y = 450
-    rule(draw, y)
-
-    # ---- three-column row -------------------------------------------------
-    row_top = y + 12
-    col_w = 296
-    col_x = [EDGE, EDGE + 328, EDGE + 656]
-    scenes = [taiex_scene, cop_scene, gold_scene]
-    stories = [
-        ("MARKETS \u2022 TAIPEI", "TAIWAN STOCKS CRASH IN AI ROUT",
-         "Taiex falls 6.2% on Friday, capping a 16% weekly rout \u2014 its "
-         "worst week since 1991 \u2014 as Anthropic's record IPO fails to calm "
-         "AI fears."),
-        ("CLIMATE \u2022 ANTALYA", "COP31 DEADLOCKED ON FINAL DAY",
-         "The draft deal drops all mention of fossil fuels and Africa's "
-         "$120bn adaptation target as the summit runs into its final hours."),
-        ("MARKETS \u2022 GOLD", "GOLD BREAKS BELOW $3,600",
-         "Spot gold falls 1.9% to $3,551 an ounce, a 14-month low, as "
-         "investors dump bullion to cover losses in AI stocks."),
-    ]
-    for cx0, scene, (kick, head, body) in zip(col_x, scenes, stories):
-        scene(draw, [cx0, row_top, cx0 + col_w, row_top + 104])
-        story_block(draw, cx0 + col_w / 2, row_top + 114, col_w,
-                    kick, head, body)
-    y = 733
-    rule(draw, y)
-
-    # ---- bottom row --------------------------------------------------------
-    bot_top = y + 12
-    half_w = 460
-    left_x, right_x = EDGE, EDGE + 492
-    galaxy_scene(draw, [left_x, bot_top, left_x + half_w, bot_top + 96])
-    story_block(draw, left_x + half_w / 2, bot_top + 106, half_w,
-                "TECHNOLOGY \u2022 SEOUL", "SAMSUNG NAMES NEW GALAXY CHIEF",
-                "Won-Joon Choi takes over the mobile division from TM Roh "
-                "after nearly seven years, in a reshuffle that also promotes "
-                "three chip veterans to president.", head_size=28,
-                body_leading=20)
-    cyclone_scene(draw, [right_x, bot_top, right_x + half_w, bot_top + 96])
-    story_block(draw, right_x + half_w / 2, bot_top + 106, half_w,
-                "PACIFIC \u2022 COOK ISLANDS",
-                "RECORD CYCLONE XAVIER WEAKENS",
-                "The strongest November cyclone on record east of the "
-                "date line, with peak winds of 220 km/h, eases over "
-                "the northern Cooks after damaging homes; gale "
-                "warnings remain in force.", head_size=28, body_leading=20)
-
-    # ---- footer -------------------------------------------------------------
-    rule(draw, PAGE_H - 22, weight=1)
-    centred_lines(draw, PAGE_W / 2, PAGE_H - 16,
-                  "Make It News \u2022 All six stories verified from wire "
-                  "reports, Friday 20 November 2026",
-                  serif(12), SOFT_INK, RIGHT - EDGE, 14)
-    return img
+def story_block(draw, x, y, w, story, body_size=10, lh=13):
+    """Draw one grid story; return height consumed."""
+    cy = y
+    kf = sans_bold(9)
+    draw_tracked(draw, x + w / 2, cy, story["kicker"], kf, 1.2, RED)
+    cy += 14
+    hf, _ = fit_font(draw, story["headline"], 16, w, 3, bold=True, minimum=12)
+    for ln in wrap(draw, story["headline"], hf, w):
+        draw_centered(draw, x + w / 2, cy, ln, hf, INK)
+        cy += 19
+    cy += 2
+    bf = serif(body_size)
+    lines = wrap(draw, story["body"], bf, w)
+    for ln in lines:
+        draw.text((x, cy), ln, font=bf, fill=INK)
+        cy += lh
+    return cy - y
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    out = os.path.join(here, "entry.png")
-    build_page().save(out, format="PNG", optimize=True)
-    print("wrote", out)
+    img = Image.new("RGB", (W, H), PAPER)
+    draw = ImageDraw.Draw(img)
+
+    margin = 30
+    right = W - margin
+
+    # ---- masthead
+    draw.line([margin, 12, right, 12], fill=INK, width=3)
+    draw.line([margin, 18, right, 18], fill=INK, width=1)
+    mf = masthead_font(88)
+    title = "MAKE IT NEWS"
+    while text_w(draw, title, mf) > (W - 2 * margin) and mf.size > 40:
+        mf = masthead_font(mf.size - 4)
+    draw_centered(draw, W / 2, 22, title, mf, RED)
+    sub = "THE WORLD ON FRIDAY, 20 NOVEMBER 2026"
+    draw_tracked(draw, W / 2, 118, sub, serif_bold(15), 3.2, INK)
+    # red bar
+    draw.rectangle([margin, 142, right, 170], fill=BAR_RED)
+    bar_f = serif_bold(13)
+    draw.text((margin + 10, 149), "No. 19,412", font=bar_f, fill=CREAM)
+    draw_centered(draw, W / 2, 149, "FRIDAY, 20 NOVEMBER 2026", bar_f, CREAM)
+    rtxt = "PRICE: ONE PENNY"
+    draw.text((right - 10 - text_w(draw, rtxt, bar_f), 149), rtxt,
+              font=bar_f, fill=CREAM)
+    draw.line([margin, 178, right, 178], fill=INK, width=1)
+
+    # ---- lead story
+    ly = 186
+    draw_tracked(draw, W / 2, ly, LEAD["kicker"], sans_bold(11), 2.0, RED)
+    ly += 19
+    hf, _ = fit_font(draw, LEAD["headline"], 44, W - 2 * margin, 1,
+                     bold=True, minimum=30)
+    draw_centered(draw, W / 2, ly, LEAD["headline"], hf, INK)
+    ly += 52
+    sf = serif_italic(13)
+    for ln in wrap(draw, LEAD["standfirst"], sf, W - 2 * margin - 120):
+        draw_centered(draw, W / 2, ly, ln, sf, INK)
+        ly += 18
+    ly += 5
+    # body in two columns + illustration at right
+    img_w = 336
+    img_x = right - img_w
+    img_y = ly
+    img_h = 118
+    draw_lead_image(draw, img_x, img_y, img_w, img_h)
+    cap_f = serif_italic(10)
+    cap_lines = wrap(draw, LEAD["caption"], cap_f, img_w)
+    cy = img_y + img_h + 4
+    for ln in cap_lines:
+        draw_centered(draw, img_x + img_w / 2, cy, ln, cap_f, MUTED)
+        cy += 13
+    text_w_avail = img_x - margin - 18
+    col_w = (text_w_avail - 16) // 2
+    bf = serif(12)
+    body_lines = wrap(draw, LEAD["body"], bf, col_w)
+    half = (len(body_lines) + 1) // 2
+    for ci, chunk in enumerate((body_lines[:half], body_lines[half:])):
+        cx = margin + ci * (col_w + 16)
+        yy = ly
+        for ln in chunk:
+            draw.text((cx, yy), ln, font=bf, fill=INK)
+            yy += 15
+    lead_bottom = max(ly + half * 15, cy)
+    gy = lead_bottom + 10
+    draw.line([margin, gy, right, gy], fill=INK, width=2)
+    gy += 12
+
+    # ---- main grid: 3 story columns + IN BRIEF rail
+    gutter = 16
+    brief_w = 196
+    col_w = (W - 2 * margin - brief_w - 3 * gutter) // 3
+    cols_x = [margin + i * (col_w + gutter) for i in range(3)]
+    brief_x = cols_x[2] + col_w + gutter
+    grid_bottom = 968
+
+    # vertical rules between columns
+    for i in range(3):
+        vx = cols_x[i] + col_w + gutter // 2
+        draw.line([vx, gy + 2, vx, grid_bottom], fill=MUTED, width=1)
+
+    columns = [STORIES[0:3], STORIES[3:6], STORIES[6:8]]
+    bottoms = []
+    for ci, col_stories in enumerate(columns):
+        yy = gy
+        for si, story in enumerate(col_stories):
+            if si:
+                yy += 7
+                draw.line([cols_x[ci], yy, cols_x[ci] + col_w, yy],
+                          fill=GOLD_LINE, width=1)
+                yy += 7
+            used = story_block(draw, cols_x[ci], yy, col_w, story)
+            yy += used
+        bottoms.append(yy)
+    print("grid top:", gy, "column bottoms:", bottoms,
+          "limit:", grid_bottom)
+
+    # ---- ALSO TODAY filler box in the third column
+    ax = cols_x[2]
+    ay = bottoms[2] + 14
+    draw.line([ax, ay, ax + col_w, ay], fill=INK, width=2)
+    draw.line([ax, ay + 3, ax + col_w, ay + 3], fill=INK, width=1)
+    ay += 8
+    draw_centered(draw, ax + col_w // 2, ay, "ALSO TODAY",
+                  serif_bold(13), INK)
+    ay += 20
+    afl = serif(10)
+    afb = serif_bold(10)
+    for place, txt in ALSO_TODAY:
+        lead = place + " \u2014 "
+        lead_w = text_w(draw, lead, afb)
+        lines = []
+        cur = ""
+        maxw = col_w - lead_w
+        for wd in txt.split():
+            trial = wd if not cur else cur + " " + wd
+            if text_w(draw, trial, afl) <= maxw or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = wd
+                maxw = col_w
+        if cur:
+            lines.append(cur)
+        draw.text((ax, ay), lead, font=afb, fill=RED)
+        draw.text((ax + lead_w, ay), lines[0], font=afl, fill=INK)
+        ay += 13
+        for ln in lines[1:]:
+            draw.text((ax, ay), ln, font=afl, fill=INK)
+            ay += 13
+        ay += 6
+    draw.line([ax, ay, ax + col_w, ay], fill=INK, width=1)
+    print("also-today box bottom:", ay + 2)
+
+    # ---- IN BRIEF rail
+    bx = brief_x
+    by = gy
+    draw.rectangle([bx, by, bx + brief_w, by + 24], fill=BAR_RED)
+    draw_centered(draw, bx + brief_w // 2, by + 5, "IN BRIEF",
+                  serif_bold(13), CREAM)
+    by += 32
+    bfl = serif(10)
+    bfb = serif_bold(10)
+    for place, txt in BRIEFS:
+        lead = place + " \u2014 "
+        lead_w = text_w(draw, lead, bfb)
+        # hanging-indent wrap: first line is narrower by the lead-in width
+        lines = []
+        cur = ""
+        maxw = brief_w - lead_w
+        for wd in txt.split():
+            trial = wd if not cur else cur + " " + wd
+            if text_w(draw, trial, bfl) <= maxw or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = wd
+                maxw = brief_w
+        if cur:
+            lines.append(cur)
+        draw.text((bx, by), lead, font=bfb, fill=RED)
+        draw.text((bx + lead_w, by), lines[0], font=bfl, fill=INK)
+        by += 13
+        for ln in lines[1:]:
+            draw.text((bx, by), ln, font=bfl, fill=INK)
+            by += 13
+        by += 5
+        draw.text((bx + brief_w // 2 - 4, by - 3), "\u2022", font=bfl,
+                  fill=MUTED)
+        by += 6
+    # markets box
+    by += 2
+    draw.line([bx, by, bx + brief_w, by], fill=INK, width=2)
+    by += 5
+    draw_centered(draw, bx + brief_w // 2, by, "THE MARKETS",
+                  serif_bold(12), INK)
+    by += 19
+    mfnt = serif(10)
+    mfb = serif_bold(10)
+    for name, val, chg in MARKETS:
+        draw.text((bx, by), name, font=mfb, fill=INK)
+        chg_w = text_w(draw, chg, mfnt)
+        draw.text((bx + brief_w - chg_w, by), chg, font=mfnt, fill=RED)
+        val_w = text_w(draw, val, mfnt)
+        draw.text((bx + brief_w - chg_w - val_w - 8, by), val, font=mfnt,
+                  fill=INK)
+        by += 14
+    draw.line([bx, by + 2, bx + brief_w, by + 2], fill=INK, width=1)
+
+    # ---- footer
+    draw.line([margin, 976, right, 976], fill=INK, width=2)
+    draw.line([margin, 980, right, 980], fill=INK, width=1)
+    foot = ("Make It News \u2022 All nine stories and the wire briefs "
+            "verified from wire reports \u2022 Friday 20 November 2026")
+    draw_centered(draw, W / 2, 988, foot, serif_italic(11), MUTED)
+
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "entry.png")
+    img.save(out, format="PNG", optimize=True)
+    print("wrote", out, img.size)
 
 
 if __name__ == "__main__":
