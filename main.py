@@ -1,35 +1,32 @@
 #!/usr/bin/env python3
-"""Entry point for the make.fun news-image-20261120 entry.
+"""Entry point for the *Make It News* make.fun submission.
 
-Copies the held front-page image (entry.png, rendered by render_image.py)
-into the output directory, byte for byte. Standard library only, no
-network access, no work done at run time beyond the copy — so repeated
-runs always produce identical output.
+Running this file rebuilds the newspaper front page from scratch --
+every headline, column and illustration is typeset and drawn by
+`render_image.py` at run time -- and writes the result to `entry.png`
+next to this file.  It then reports the finished image's dimensions
+and file size so a bad render is obvious from the console alone.
 
-The output directory defaults to /output and can be overridden with the
-MAKEFUN_OUTPUT_DIR environment variable.
+Usage:  python3 main.py
 """
 
 import os
-import shutil
 import sys
-from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import render_image
 
 
-def main() -> int:
-    here = Path(__file__).resolve().parent
-    source = here / "entry.png"
-    if not source.is_file():
-        print(f"error: {source} is missing", file=sys.stderr)
-        return 1
-
-    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / "entry.png"
-    shutil.copyfile(source, target)
-    print(f"wrote {target} ({target.stat().st_size} bytes)")
-    return 0
+def produce_front_page():
+    """Render the page and save it as entry.png beside this script."""
+    target = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "entry.png")
+    picture = render_image.build_page()
+    picture.save(target, format="PNG", optimize=True)
+    return target, picture.size, os.path.getsize(target)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    path, (w, h), nbytes = produce_front_page()
+    print(f"Make It News front page -> {path} ({w}x{h}, {nbytes} bytes)")
